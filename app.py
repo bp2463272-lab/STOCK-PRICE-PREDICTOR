@@ -76,6 +76,20 @@ if 'model_trained' not in st.session_state:
     st.session_state.model_trained = False
 if 'predictions_made' not in st.session_state:
     st.session_state.predictions_made = False
+if 'df' not in st.session_state:
+    st.session_state.df = None
+if 'model' not in st.session_state:
+    st.session_state.model = None
+if 'feature_names' not in st.session_state:
+    st.session_state.feature_names = []
+if 'X_train' not in st.session_state:
+    st.session_state.X_train = None
+if 'X_test' not in st.session_state:
+    st.session_state.X_test = None
+if 'y_train' not in st.session_state:
+    st.session_state.y_train = None
+if 'y_test' not in st.session_state:
+    st.session_state.y_test = None
 
 # Header
 st.markdown('<p class="main-header">NETFLIX STOCK PREDICTOR</p>', unsafe_allow_html=True)
@@ -105,29 +119,32 @@ with st.sidebar:
     # Sample data option
     if not st.session_state.data_loaded:
         st.info("📌 Using sample data for demonstration")
-        # Create sample data path - in production, you'd have the file in the same directory
+        # Create sample data - in production, you'd have the file in the same directory
         try:
-            df = pd.read_csv('nflx_2014_2023.csv')
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-            st.session_state.df = df
-            st.session_state.data_loaded = True
+            # For demonstration, let's create a small sample if file doesn't exist
+            # In production, you'd have the actual CSV file
+            st.warning("Sample data file not found. Please upload your own CSV.")
+            st.session_state.data_loaded = False
         except:
             st.warning("Sample data file not found. Please upload your own CSV.")
     
     # Model parameters (only show if data is loaded)
-    if st.session_state.data_loaded:
+    if st.session_state.data_loaded and st.session_state.df is not None:
         st.markdown("---")
         st.subheader("🔧 Model Parameters")
         
         # Feature selection options
-        st.session_state.test_size = st.slider("Test Size (%)", 10, 30, 20, 5)
+        test_size = st.slider("Test Size (%)", 10, 30, 20, 5)
+        st.session_state.test_size = test_size
         
         # Advanced options expander
         with st.expander("Advanced Options"):
-            st.session_state.remove_outliers = st.checkbox("Remove Outliers", False)
-            st.session_state.scale_features = st.checkbox("Scale Features", True)
-            st.session_state.cv_folds = st.slider("Cross-validation Folds", 2, 10, 5)
+            remove_outliers = st.checkbox("Remove Outliers", False)
+            st.session_state.remove_outliers = remove_outliers
+            scale_features = st.checkbox("Scale Features", True)
+            st.session_state.scale_features = scale_features
+            cv_folds = st.slider("Cross-validation Folds", 2, 10, 5)
+            st.session_state.cv_folds = cv_folds
         
         # Train button
         if st.button("🚀 Train Model", use_container_width=True):
@@ -135,7 +152,7 @@ with st.sidebar:
                 st.session_state.model_trained = True
 
 # Main content area
-if st.session_state.data_loaded:
+if st.session_state.data_loaded and st.session_state.df is not None:
     df = st.session_state.df
     
     # Create tabs for different sections
@@ -171,7 +188,9 @@ if st.session_state.data_loaded:
             rows_to_show = st.selectbox("Rows to display", [5, 10, 20, 50, 100], index=1)
         
         with col1:
-            styled_df = df.head(rows_to_show).style.format({
+            # Format the dataframe for display
+            display_df = df.head(rows_to_show).copy()
+            styled_df = display_df.style.format({
                 'open': '${:.2f}',
                 'high': '${:.2f}',
                 'low': '${:.2f}',
@@ -288,7 +307,9 @@ if st.session_state.data_loaded:
         # Correlation heatmap
         st.subheader("Correlation Matrix")
         numeric_cols = ['close', 'volume', 'rsi_14', 'macd', 'atr_14', 'next_day_close']
-        corr_matrix = df[numeric_cols].corr()
+        # Filter to only columns that exist
+        available_cols = [col for col in numeric_cols if col in df.columns]
+        corr_matrix = df[available_cols].corr()
         
         fig = px.imshow(corr_matrix, text_auto='.2f', aspect="auto",
                        color_continuous_scale='RdBu_r', title='Feature Correlations')
@@ -315,7 +336,9 @@ if st.session_state.data_loaded:
         if st.session_state.model_trained:
             # Prepare features (remove highly correlated ones)
             features_to_drop = ['open', 'high', 'low', 'sma_50', 'sma_100', 'ema_100']
-            X = df.drop(columns=['next_day_close'] + [c for c in features_to_drop if c in df.columns])
+            # Only drop columns that exist
+            cols_to_drop = [col for col in features_to_drop if col in df.columns]
+            X = df.drop(columns=['next_day_close'] + cols_to_drop)
             y = df['next_day_close']
             
             st.write(f"**Features used in model:** {', '.join(X.columns.tolist())}")
@@ -351,6 +374,12 @@ if st.session_state.data_loaded:
             st.session_state.y_train = y_train
             st.session_state.y_test = y_test
             st.session_state.feature_names = X.columns.tolist()
+            st.session_state.train_r2 = train_r2
+            st.session_state.test_r2 = test_r2
+            st.session_state.train_rmse = train_rmse
+            st.session_state.test_rmse = test_rmse
+            st.session_state.train_mae = train_mae
+            st.session_state.test_mae = test_mae
             
             # Display metrics
             col1, col2, col3 = st.columns(3)
@@ -390,7 +419,7 @@ if st.session_state.data_loaded:
             with st.expander("🔄 Cross-Validation Results"):
                 if st.button("Run Cross-Validation"):
                     with st.spinner("Running 5-fold time series CV..."):
-                        tscv = TimeSeriesSplit(n_splits=5)
+                        tscv = TimeSeriesSplit(n_splits=st.session_state.cv_folds)
                         cv_scores = []
                         
                         for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
