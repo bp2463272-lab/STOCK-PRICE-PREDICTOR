@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 
 # ── Page configuration ────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="NFLX Stock Predictor",
+    page_title="Stock Predictor",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -98,7 +98,7 @@ for k, v in DEFAULTS.items():
         st.session_state[k] = v
 
 # ── Header ─────────────────────────────────────────────────────────────────────
-st.markdown('<p class="main-header">NETFLIX STOCK PREDICTOR</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-header">STOCK PREDICTOR</p>', unsafe_allow_html=True)
 st.markdown(
     '<p class="sub-header">Linear Regression Model for Next Day Close Price Prediction (2014-2023)</p>',
     unsafe_allow_html=True
@@ -106,7 +106,6 @@ st.markdown(
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/7/75/Netflix_icon.svg", width=100)
     st.title("⚙️ Control Panel")
 
     uploaded_file = st.file_uploader(
