@@ -1,460 +1,247 @@
-# app.py
-import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.model_selection import TimeSeriesSplit
-from datetime import datetime, timedelta
-import warnings
-warnings.filterwarnings('ignore')
 
-# Page configuration
-st.set_page_config(
-    page_title="NFLX Stock Predictor",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
+**Evaluation Metrics:**
+- R² Score (0-1, higher is better)
+- RMSE (Root Mean Square Error)
+- MAE (Mean Absolute Error)
+""")
+
+with tab4:
+st.header("📉 Predictions & Analysis")
+
+if st.session_state.get('predictions_made', False) and st.session_state.model is not None:
+model = st.session_state.model
+X_test = st.session_state.X_test
+y_test = st.session_state.y_test
+y_pred = model.predict(X_test)
+
+# Create predictions dataframe
+pred_df = pd.DataFrame({
+'Actual': y_test.values,
+'Predicted': y_pred,
+'Date': y_test.index
+})
+pred_df['Error'] = pred_df['Actual'] - pred_df['Predicted']
+pred_df['Error %'] = (pred_df['Error'] / pred_df['Actual'] * 100).abs()
+
+# Actual vs Predicted plot
+st.subheader("Actual vs Predicted Prices")
+fig = make_subplots(rows=1, cols=2, subplot_titles=('Time Series', 'Scatter Plot'))
+
+# Time series
+fig.add_trace(
+go.Scatter(x=pred_df['Date'], y=pred_df['Actual'], mode='lines',
+          name='Actual', line=dict(color='#E50914', width=2)),
+row=1, col=1
+)
+fig.add_trace(
+go.Scatter(x=pred_df['Date'], y=pred_df['Predicted'], mode='lines',
+          name='Predicted', line=dict(color='#2E86AB', width=2, dash='dash')),
+row=1, col=1
 )
 
-# Custom CSS
+# Scatter
+fig.add_trace(
+go.Scatter(x=pred_df['Actual'], y=pred_df['Predicted'], mode='markers',
+          marker=dict(color='#F39C12', size=5, opacity=0.6),
+          name='Predictions'),
+row=1, col=2
+)
+
+# Perfect prediction line
+min_val = min(pred_df['Actual'].min(), pred_df['Predicted'].min())
+max_val = max(pred_df['Actual'].max(), pred_df['Predicted'].max())
+fig.add_trace(
+go.Scatter(x=[min_val, max_val], y=[min_val, max_val],
+          mode='lines', line=dict(color='red', dash='dash'),
+          name='Perfect Fit', showlegend=False),
+row=1, col=2
+)
+
+fig.update_layout(height=500)
+st.plotly_chart(fig, use_container_width=True)
+
+# Error analysis
+col1, col2, col3 = st.columns(3)
+with col1:
+st.metric("Mean Error", f"${pred_df['Error'].mean():.2f}")
+with col2:
+st.metric("Std Error", f"${pred_df['Error'].std():.2f}")
+with col3:
+st.metric("Avg Error %", f"{pred_df['Error %'].mean():.2f}%")
+
+# Residual plot
+st.subheader("Residual Analysis")
+fig = make_subplots(rows=1, cols=2, subplot_titles=('Residuals vs Predicted', 'Residual Distribution'))
+
+fig.add_trace(
+go.Scatter(x=y_pred, y=pred_df['Error'], mode='markers',
+          marker=dict(color='#8E44AD', size=5, opacity=0.6),
+          name='Residuals'),
+row=1, col=1
+)
+fig.add_hline(y=0, line_dash="dash", line_color="red", row=1, col=1)
+
+fig.add_trace(
+go.Histogram(x=pred_df['Error'], nbinsx=30, name='Residuals',
+            marker_color='#2A9D8F'),
+row=1, col=2
+)
+
+fig.update_layout(height=400)
+st.plotly_chart(fig, use_container_width=True)
+
+# Make new prediction
+st.subheader("🔮 Make New Prediction")
+st.write("Enter feature values to predict next day's close price:")
+
+col1, col2, col3 = st.columns(3)
+input_values = {}
+
+feature_names = st.session_state.feature_names
+n_features = len(feature_names)
+
+with col1:
+for feat in feature_names[:min(4, n_features)]:
+    if feat in X_test.columns:
+        default_val = float(X_test[feat].mean())
+        input_values[feat] = st.number_input(f"{feat}", value=default_val, format="%.2f", key=f"input_{feat}")
+
+with col2:
+for feat in feature_names[4:8] if n_features > 4 else []:
+    if feat in X_test.columns:
+        default_val = float(X_test[feat].mean())
+        input_values[feat] = st.number_input(f"{feat}", value=default_val, format="%.2f", key=f"input_{feat}")
+
+with col3:
+for feat in feature_names[8:] if n_features > 8 else []:
+    if feat in X_test.columns:
+        default_val = float(X_test[feat].mean())
+        input_values[feat] = st.number_input(f"{feat}", value=default_val, format="%.2f", key=f"input_{feat}")
+
+if st.button("Predict Next Day Close"):
+input_df = pd.DataFrame([input_values])
+# Ensure columns are in the same order as training
+input_df = input_df[feature_names]
+prediction = model.predict(input_df)[0]
+
+# Get confidence interval (simplified)
+std_error = pred_df['Error'].std()
+
+st.success(f"### Predicted Next Day Close: **${prediction:.2f}**")
+st.info(f"Confidence Interval (95%): ${prediction - 1.96*std_error:.2f} to ${prediction + 1.96*std_error:.2f}")
+
+else:
+st.info("👈 Train the model first to see predictions")
+
+with tab5:
+st.header("📋 Summary Report")
+
+if st.session_state.get('predictions_made', False) and st.session_state.model is not None:
+# Generate comprehensive report
+feature_importance = pd.DataFrame({
+'Feature': st.session_state.feature_names,
+'Coefficient': st.session_state.model.coef_,
+'Abs_Coefficient': np.abs(st.session_state.model.coef_)
+}).sort_values('Abs_Coefficient', ascending=False)
+
+# Get prediction data for error analysis
+X_test = st.session_state.X_test
+y_test = st.session_state.y_test
+y_pred = st.session_state.model.predict(X_test)
+pred_df = pd.DataFrame({
+'Actual': y_test.values,
+'Predicted': y_pred,
+'Error': y_test.values - y_pred
+})
+
+report = f"""
+## Linear Regression Model Summary
+
+### 1. Data Overview
+- **Total Trading Days:** {len(df):,}
+- **Date Range:** {df.index.min().date()} to {df.index.max().date()}
+- **Features Used:** {len(st.session_state.feature_names)}
+- **Target Variable:** next_day_close (Next Day's Closing Price)
+
+### 2. Model Performance
+- **Train R² Score:** {st.session_state.train_r2:.4f} ({st.session_state.train_r2*100:.2f}% variance explained)
+- **Test R² Score:** {st.session_state.test_r2:.4f} ({st.session_state.test_r2*100:.2f}% variance explained)
+- **Train RMSE:** ${st.session_state.train_rmse:.2f}
+- **Test RMSE:** ${st.session_state.test_rmse:.2f}
+- **Train MAE:** ${st.session_state.train_mae:.2f}
+- **Test MAE:** ${st.session_state.test_mae:.2f}
+
+### 3. Top 5 Most Important Features
+"""
+
+for i, row in feature_importance.head(5).iterrows():
+report += f"\n   - **{row['Feature']}:** Coefficient = {row['Coefficient']:.4f}"
+
+report += f"""
+
+### 4. Error Analysis
+- **Mean Prediction Error:** ${pred_df['Error'].mean():.2f}
+- **Standard Deviation of Error:** ${pred_df['Error'].std():.2f}
+- **Average Absolute Error %:** {(pred_df['Error'].abs() / pred_df['Actual'] * 100).mean():.2f}%
+- **Maximum Overestimate:** ${pred_df['Error'].max():.2f}
+- **Maximum Underestimate:** ${-pred_df['Error'].min():.2f}
+
+### 5. Business Implications
+- The model explains **{st.session_state.test_r2*100:.1f}%** of the variance in next day's closing price
+- Typical prediction error is **${st.session_state.test_mae:.2f}** (about {st.session_state.test_mae/df['close'].mean()*100:.1f}% of average price)
+- Most influential features are moving averages and volatility indicators
+- The model performs best during normal market conditions
+
+### 6. Limitations & Recommendations
+**Limitations:**
+- Linear model cannot capture complex non-linear patterns
+- Does not account for external factors (news, earnings, market sentiment)
+- Performance may degrade during high volatility periods
+
+**Recommendations for Improvement:**
+1. Try non-linear models (Random Forest, XGBoost)
+2. Add external features (market indices, sector performance)
+3. Implement ensemble methods
+4. Use LSTM for better time series pattern recognition
+"""
+
+st.markdown(report)
+
+# Download report button
+report_df = pd.DataFrame({
+'Metric': ['Train R²', 'Test R²', 'Train RMSE', 'Test RMSE', 'Train MAE', 'Test MAE'],
+'Value': [st.session_state.train_r2, st.session_state.test_r2, 
+         st.session_state.train_rmse, st.session_state.test_rmse,
+         st.session_state.train_mae, st.session_state.test_mae]
+})
+
+csv = report_df.to_csv(index=False)
+st.download_button(
+label="📥 Download Report CSV",
+data=csv,
+file_name="model_report.csv",
+mime="text/csv"
+)
+
+else:
+st.info("👈 Train the model first to generate a summary report")
+
+else:
+# Welcome message when no data is loaded
+st.info("👈 Please upload a CSV file in the sidebar to get started")
+
+# Show sample of expected format
 st.markdown("""
-<style>
-    .main-header {
-        font-size: 3rem;
-        color: #E50914;
-        text-align: center;
-        font-weight: bold;
-        margin-bottom: 0;
-        padding-bottom: 0;
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        color: #564d4d;
-        text-align: center;
-        margin-top: 0;
-        padding-top: 0;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 1rem;
-        text-align: center;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-    }
-    .insight-text {
-        background-color: #e8f4f8;
-        border-left: 5px solid #E50914;
-        padding: 1rem;
-        border-radius: 5px;
-        margin: 1rem 0;
-    }
-    .stButton>button {
-        background-color: #E50914;
-        color: white;
-        font-weight: bold;
-        border-radius: 5px;
-        border: none;
-        padding: 0.5rem 2rem;
-    }
-    .stButton>button:hover {
-        background-color: #b20710;
-    }
-</style>
-""", unsafe_allow_html=True)
+### Expected CSV Format:
 
-# Initialize session state
-if 'data_loaded' not in st.session_state:
-    st.session_state.data_loaded = False
-if 'model_trained' not in st.session_state:
-    st.session_state.model_trained = False
-if 'predictions_made' not in st.session_state:
-    st.session_state.predictions_made = False
-if 'df' not in st.session_state:
-    st.session_state.df = None
-if 'model' not in st.session_state:
-    st.session_state.model = None
-if 'feature_names' not in st.session_state:
-    st.session_state.feature_names = []
-if 'X_train' not in st.session_state:
-    st.session_state.X_train = None
-if 'X_test' not in st.session_state:
-    st.session_state.X_test = None
-if 'y_train' not in st.session_state:
-    st.session_state.y_train = None
-if 'y_test' not in st.session_state:
-    st.session_state.y_test = None
+Your CSV should contain the following columns:
+- `date`: Trading date
+- `open`: Opening price
+- `high`: Daily high price
+- `low`: Daily low price
+- `close`: Closing price
+- `volume`: Trading volume
+- Various technical indicators (RSI, MACD, etc.)
+- `next_day_close`: Target variable (next day's closing price)
 
-# Header
-st.markdown('<p class="main-header">NETFLIX STOCK PREDICTOR</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Linear Regression Model for Next Day Close Price Prediction (2014-2023)</p>', unsafe_allow_html=True)
-
-# Sidebar
-with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/7/75/Netflix_icon.svg", width=100)
-    st.title("⚙️ Control Panel")
-    
-    # File upload
-    uploaded_file = st.file_uploader("Upload CSV file", type=['csv'], 
-                                     help="Upload your Netflix stock data CSV")
-    
-    if uploaded_file is not None:
-        try:
-            df = pd.read_csv(uploaded_file)
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-            st.session_state.df = df
-            st.session_state.data_loaded = True
-            st.success("✅ Data loaded successfully!")
-        except Exception as e:
-            st.error(f"Error loading file: {e}")
-            st.session_state.data_loaded = False
-    
-    # Sample data option
-    if not st.session_state.data_loaded:
-        st.info("📌 Using sample data for demonstration")
-        # Create sample data - in production, you'd have the file in the same directory
-        try:
-            # For demonstration, let's create a small sample if file doesn't exist
-            # In production, you'd have the actual CSV file
-            st.warning("Sample data file not found. Please upload your own CSV.")
-            st.session_state.data_loaded = False
-        except:
-            st.warning("Sample data file not found. Please upload your own CSV.")
-    
-    # Model parameters (only show if data is loaded)
-    if st.session_state.data_loaded and st.session_state.df is not None:
-        st.markdown("---")
-        st.subheader("🔧 Model Parameters")
-        
-        # Feature selection options
-        test_size = st.slider("Test Size (%)", 10, 30, 20, 5)
-        st.session_state.test_size = test_size
-        
-        # Advanced options expander
-        with st.expander("Advanced Options"):
-            remove_outliers = st.checkbox("Remove Outliers", False)
-            st.session_state.remove_outliers = remove_outliers
-            scale_features = st.checkbox("Scale Features", True)
-            st.session_state.scale_features = scale_features
-            cv_folds = st.slider("Cross-validation Folds", 2, 10, 5)
-            st.session_state.cv_folds = cv_folds
-        
-        # Train button
-        if st.button("🚀 Train Model", use_container_width=True):
-            with st.spinner("Training model... This may take a moment."):
-                st.session_state.model_trained = True
-
-# Main content area
-if st.session_state.data_loaded and st.session_state.df is not None:
-    df = st.session_state.df
-    
-    # Create tabs for different sections
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📊 Data Overview", 
-        "📈 Exploratory Analysis", 
-        "🤖 Model Training", 
-        "📉 Predictions",
-        "📋 Summary Report"
-    ])
-    
-    with tab1:
-        st.header("📊 Data Overview")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Days", f"{len(df):,}", 
-                     help="Total number of trading days")
-        with col2:
-            st.metric("Date Range", f"{df.index.min().year}-{df.index.max().year}",
-                     help="Time period covered")
-        with col3:
-            st.metric("Avg Close Price", f"${df['close'].mean():.2f}",
-                     delta=f"{((df['close'].iloc[-1] - df['close'].iloc[0])/df['close'].iloc[0]*100):.1f}% total return")
-        with col4:
-            st.metric("Total Volume", f"{df['volume'].sum():,.0f}",
-                     help="Total trading volume")
-        
-        # Data preview with formatting
-        st.subheader("Data Preview")
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            rows_to_show = st.selectbox("Rows to display", [5, 10, 20, 50, 100], index=1)
-        
-        with col1:
-            # Format the dataframe for display
-            display_df = df.head(rows_to_show).copy()
-            styled_df = display_df.style.format({
-                'open': '${:.2f}',
-                'high': '${:.2f}',
-                'low': '${:.2f}',
-                'close': '${:.2f}',
-                'next_day_close': '${:.2f}',
-                'volume': '{:,.0f}',
-                'rsi_7': '{:.1f}',
-                'rsi_14': '{:.1f}',
-                'macd': '{:.3f}',
-                'atr_7': '{:.2f}',
-                'atr_14': '{:.2f}'
-            })
-            st.dataframe(styled_df, use_container_width=True)
-        
-        # Data info
-        st.subheader("Dataset Information")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Column Names:**")
-            for col in df.columns:
-                st.write(f"• {col}")
-        
-        with col2:
-            st.write("**Data Types & Missing Values:**")
-            info_df = pd.DataFrame({
-                'Data Type': df.dtypes,
-                'Missing': df.isnull().sum(),
-                'Missing %': (df.isnull().sum()/len(df)*100).round(2)
-            })
-            st.dataframe(info_df, use_container_width=True)
-        
-        # Statistical summary
-        with st.expander("📊 Statistical Summary"):
-            st.dataframe(df.describe().round(2), use_container_width=True)
-    
-    with tab2:
-        st.header("📈 Exploratory Data Analysis")
-        
-        # Time series plot
-        st.subheader("Stock Price Over Time")
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=('Close Price with Range', 'Trading Volume', 'RSI-14', 'MACD'),
-            vertical_spacing=0.12
-        )
-        
-        # Close price with range
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['close'], mode='lines', name='Close',
-                      line=dict(color='#E50914', width=2)),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['high'], mode='lines', name='High',
-                      line=dict(color='rgba(0,255,0,0.3)', width=1), showlegend=False),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['low'], mode='lines', name='Low',
-                      line=dict(color='rgba(255,0,0,0.3)', width=1), showlegend=False),
-            row=1, col=1
-        )
-        
-        # Volume
-        fig.add_trace(
-            go.Bar(x=df.index, y=df['volume'], name='Volume', marker_color='#2E86AB'),
-            row=1, col=2
-        )
-        
-        # RSI
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['rsi_14'], mode='lines', name='RSI-14',
-                      line=dict(color='#F39C12', width=2)),
-            row=2, col=1
-        )
-        fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, row=2, col=1)
-        fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, row=2, col=1)
-        
-        # MACD
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['macd'], mode='lines', name='MACD',
-                      line=dict(color='#8E44AD', width=2)),
-            row=2, col=2
-        )
-        fig.add_hline(y=0, line_dash="solid", line_color="black", opacity=0.3, row=2, col=2)
-        
-        fig.update_layout(height=800, showlegend=False, title_text="Time Series Analysis")
-        fig.update_xaxes(rangeslider_visible=False)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Distribution plots
-        st.subheader("Distribution Analysis")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            fig = px.histogram(df, x='close', nbins=50, title='Distribution of Close Price',
-                              labels={'close': 'Price ($)'}, color_discrete_sequence=['#E50914'])
-            fig.add_vline(x=df['close'].mean(), line_dash="dash", line_color="blue",
-                         annotation_text=f"Mean: ${df['close'].mean():.2f}")
-            fig.add_vline(x=df['close'].median(), line_dash="dash", line_color="green",
-                         annotation_text=f"Median: ${df['close'].median():.2f}")
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            daily_returns = df['close'].pct_change().dropna() * 100
-            fig = px.histogram(daily_returns, nbins=50, title='Distribution of Daily Returns (%)',
-                              labels={'value': 'Return (%)'}, color_discrete_sequence=['#2E86AB'])
-            fig.add_vline(x=0, line_dash="solid", line_color="black")
-            fig.add_vline(x=daily_returns.mean(), line_dash="dash", line_color="red",
-                         annotation_text=f"Mean: {daily_returns.mean():.2f}%")
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Correlation heatmap
-        st.subheader("Correlation Matrix")
-        numeric_cols = ['close', 'volume', 'rsi_14', 'macd', 'atr_14', 'next_day_close']
-        # Filter to only columns that exist
-        available_cols = [col for col in numeric_cols if col in df.columns]
-        corr_matrix = df[available_cols].corr()
-        
-        fig = px.imshow(corr_matrix, text_auto='.2f', aspect="auto",
-                       color_continuous_scale='RdBu_r', title='Feature Correlations')
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Key insights
-        with st.expander("💡 Key Insights from EDA"):
-            st.markdown("""
-            <div class="insight-text">
-            <h4>📌 Key Observations:</h4>
-            <ul>
-                <li><strong>Price Trend:</strong> Netflix stock has shown remarkable growth from ~$50 to over $900 (1700% increase)</li>
-                <li><strong>Volatility:</strong> Daily returns average +0.095% with standard deviation of 2.85%</li>
-                <li><strong>Technical Indicators:</strong> RSI typically ranges between 30-70, indicating normal trading conditions</li>
-                <li><strong>Correlations:</strong> Strong positive correlation between price-based features (as expected)</li>
-                <li><strong>Volume Spikes:</strong> Notable volume increases during earnings announcements and major events</li>
-            </ul>
-            </div>
-            """, unsafe_allow_html=True)
-    
-    with tab3:
-        st.header("🤖 Model Training")
-        
-        if st.session_state.model_trained:
-            # Prepare features (remove highly correlated ones)
-            features_to_drop = ['open', 'high', 'low', 'sma_50', 'sma_100', 'ema_100']
-            # Only drop columns that exist
-            cols_to_drop = [col for col in features_to_drop if col in df.columns]
-            X = df.drop(columns=['next_day_close'] + cols_to_drop)
-            y = df['next_day_close']
-            
-            st.write(f"**Features used in model:** {', '.join(X.columns.tolist())}")
-            st.write(f"**Training samples:** {len(X)}")
-            
-            # Time series split
-            test_size = int(len(X) * st.session_state.test_size / 100)
-            train_size = len(X) - test_size
-            
-            X_train, X_test = X.iloc[:train_size], X.iloc[train_size:]
-            y_train, y_test = y.iloc[:train_size], y.iloc[train_size:]
-            
-            # Train model
-            lr = LinearRegression()
-            lr.fit(X_train, y_train)
-            
-            # Predictions
-            y_pred_train = lr.predict(X_train)
-            y_pred_test = lr.predict(X_test)
-            
-            # Calculate metrics
-            train_r2 = r2_score(y_train, y_pred_train)
-            test_r2 = r2_score(y_test, y_pred_test)
-            train_rmse = np.sqrt(mean_squared_error(y_train, y_pred_train))
-            test_rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
-            train_mae = mean_absolute_error(y_train, y_pred_train)
-            test_mae = mean_absolute_error(y_test, y_pred_test)
-            
-            # Store model in session state
-            st.session_state.model = lr
-            st.session_state.X_train = X_train
-            st.session_state.X_test = X_test
-            st.session_state.y_train = y_train
-            st.session_state.y_test = y_test
-            st.session_state.feature_names = X.columns.tolist()
-            st.session_state.train_r2 = train_r2
-            st.session_state.test_r2 = test_r2
-            st.session_state.train_rmse = train_rmse
-            st.session_state.test_rmse = test_rmse
-            st.session_state.train_mae = train_mae
-            st.session_state.test_mae = test_mae
-            
-            # Display metrics
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                st.metric("Train R² Score", f"{train_r2:.4f}")
-                st.metric("Test R² Score", f"{test_r2:.4f}")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                st.metric("Train RMSE", f"${train_rmse:.2f}")
-                st.metric("Test RMSE", f"${test_rmse:.2f}")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                st.metric("Train MAE", f"${train_mae:.2f}")
-                st.metric("Test MAE", f"${test_mae:.2f}")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Feature importance
-            st.subheader("Feature Importance (Coefficients)")
-            feature_importance = pd.DataFrame({
-                'Feature': X.columns,
-                'Coefficient': lr.coef_,
-                'Abs_Coefficient': np.abs(lr.coef_)
-            }).sort_values('Abs_Coefficient', ascending=False)
-            
-            fig = px.bar(feature_importance.head(10), x='Coefficient', y='Feature',
-                        orientation='h', title='Top 10 Feature Coefficients',
-                        color='Coefficient', color_continuous_scale='RdBu_r')
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Cross-validation option
-            with st.expander("🔄 Cross-Validation Results"):
-                if st.button("Run Cross-Validation"):
-                    with st.spinner("Running 5-fold time series CV..."):
-                        tscv = TimeSeriesSplit(n_splits=st.session_state.cv_folds)
-                        cv_scores = []
-                        
-                        for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
-                            X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
-                            y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
-                            
-                            cv_model = LinearRegression()
-                            cv_model.fit(X_tr, y_tr)
-                            y_pred_val = cv_model.predict(X_val)
-                            score = r2_score(y_val, y_pred_val)
-                            cv_scores.append(score)
-                            
-                            st.write(f"Fold {fold}: R² = {score:.4f}")
-                        
-                        st.write(f"**Average CV R²:** {np.mean(cv_scores):.4f} (+/- {np.std(cv_scores)*2:.4f})")
-            
-            st.session_state.predictions_made = True
-        
-        else:
-            st.info("👈 Go to the sidebar and click 'Train Model' to start training")
-            
-            # Show model architecture
-            with st.expander("📖 About the Model"):
-                st.markdown("""
-                ### Linear Regression Model
-                
-                **Why Linear Regression?**
-                - Simple and interpretable
-                - Fast training and prediction
-                - Good baseline for stock prediction
-                
-                **Features Used:**
-                - Technical indicators (RSI, MACD, CCI)
-                - Moving averages (EMA_50)
-                - Volatility measures (ATR, TrueRange)
-                - Volume
-                
-                **Model Equation:**
+**Example:**
